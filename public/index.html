@@ -1,0 +1,980 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NYC Subway Tracker</title>
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCgoTa_mvY-GZdzjMSaZUwRPzIXXsMuFGY&libraries=places&callback=initGooglePlaces" async defer></script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Bebas+Neue&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:           #0c0e0f;
+    --surface:      #141618;
+    --border:       #222527;
+    --muted:        #3a3d40;
+    --text:         #d4d8db;
+    --dim:          #5a6068;
+    --arriving:     #00ff88;
+    --delayed:      #ffd166;
+    --north-accent: #4a9eff;
+    --south-accent: #ff6b6b;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── HEADER ─────────────────────────────────────────────── */
+  .header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 1.2rem 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .logo { font-family: 'Bebas Neue', sans-serif; font-size: 1.8rem; letter-spacing: 0.1em; color: #fff; line-height: 1; }
+  .logo-sub { font-size: 0.52rem; letter-spacing: 0.2em; color: var(--dim); text-transform: uppercase; margin-top: 3px; }
+
+  .header-right { display: flex; align-items: center; gap: 1rem; }
+  .clock { font-size: 0.82rem; color: var(--dim); letter-spacing: 0.05em; white-space: nowrap; }
+
+  .refresh-btn {
+    background: none; border: 1px solid var(--border); color: var(--dim);
+    font-family: 'DM Mono', monospace; font-size: 0.58rem; letter-spacing: 0.15em;
+    padding: 0.4rem 0.9rem; cursor: pointer; text-transform: uppercase;
+    transition: all 0.2s; display: flex; align-items: center; gap: 6px; white-space: nowrap;
+  }
+  .refresh-btn:hover { border-color: var(--muted); color: var(--text); }
+  .refresh-btn.loading { opacity: 0.45; pointer-events: none; }
+  .spinner { width: 10px; height: 10px; border: 1.5px solid var(--muted); border-top-color: var(--text); border-radius: 50%; animation: spin 0.75s linear infinite; display: none; }
+  .refresh-btn.loading .spinner   { display: block; }
+  .refresh-btn.loading .btn-label { display: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── SEARCH BAR ─────────────────────────────────────────── */
+  .search-bar {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 0.9rem 2rem;
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    flex-wrap: wrap;
+  }
+
+  .search-bar label { font-size: 0.54rem; letter-spacing: 0.18em; color: var(--dim); text-transform: uppercase; flex-shrink: 0; }
+
+  /* Borough dropdown */
+  .borough-select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 0.72rem;
+    padding: 0.55rem 0.8rem;
+    outline: none;
+    letter-spacing: 0.03em;
+    cursor: pointer;
+    transition: border-color 0.2s;
+    flex-shrink: 0;
+  }
+  .borough-select:focus { border-color: var(--muted); }
+  .borough-select option { background: var(--surface); }
+
+  /* Station search */
+  .picker-wrap { position: relative; flex: 1; max-width: 460px; min-width: 160px; }
+  .search-input {
+    width: 100%; background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); font-family: 'DM Mono', monospace; font-size: 0.76rem;
+    padding: 0.55rem 1rem; outline: none; letter-spacing: 0.04em; transition: border-color 0.2s;
+  }
+  .search-input:focus { border-color: var(--muted); }
+  .search-input::placeholder { color: var(--dim); }
+
+  /* Address search */
+  .or-divider { font-size: 0.5rem; color: var(--dim); letter-spacing: 0.1em; text-transform: uppercase; flex-shrink: 0; }
+
+  .addr-wrap { position: relative; flex: 1; max-width: 380px; min-width: 160px; display: flex; gap: 0; }
+  .addr-input {
+    flex: 1; background: var(--bg); border: 1px solid var(--border);
+    border-right: none; color: var(--text); font-family: 'DM Mono', monospace;
+    font-size: 0.76rem; padding: 0.55rem 1rem; outline: none; letter-spacing: 0.04em; transition: border-color 0.2s;
+  }
+  .addr-input:focus { border-color: var(--muted); }
+  .addr-input::placeholder { color: var(--dim); }
+
+  .addr-btn {
+    background: var(--muted); border: 1px solid var(--border); border-left: none; color: var(--text);
+    font-family: 'DM Mono', monospace; font-size: 0.58rem; letter-spacing: 0.12em;
+    padding: 0 0.9rem; cursor: pointer; text-transform: uppercase; white-space: nowrap;
+    transition: background 0.2s; flex-shrink: 0;
+  }
+  .addr-btn:hover { background: #4a4d50; }
+  .addr-btn.loading { opacity: 0.5; pointer-events: none; }
+  .loc-btn {
+    font-size: 1rem; letter-spacing: 0; padding: 0 0.75rem;
+    border-left: 1px solid var(--border);
+    background: #1e2a1e;
+    color: var(--arriving);
+  }
+  .loc-btn:hover { background: #243024; }
+  .loc-btn.loading { opacity: 0.5; pointer-events: none; }
+
+  /* ── STATION DROPDOWN ───────────────────────────────────── */
+  .dropdown {
+    position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+    background: var(--surface); border: 1px solid var(--border);
+    max-height: 360px; overflow-y: auto; z-index: 300; display: none;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+  }
+  .dropdown.open { display: block; }
+  .dd-group { font-size: 0.46rem; letter-spacing: 0.22em; text-transform: uppercase; color: var(--dim); background: rgba(255,255,255,0.02); border-bottom: 1px solid var(--border); padding: 0.4rem 1rem; position: sticky; top: 0; z-index: 1; }
+  .dd-item { padding: 0.58rem 1rem; cursor: pointer; display: flex; align-items: center; gap: 0.7rem; border-bottom: 1px solid rgba(255,255,255,0.03); transition: background 0.1s; }
+  .dd-item:last-child { border-bottom: none; }
+  .dd-item:hover, .dd-item.focused { background: rgba(255,255,255,0.06); }
+  .dd-item.active { background: rgba(255,255,255,0.09); }
+  .dd-badges { display: flex; gap: 3px; flex-shrink: 0; }
+  .dd-name { font-size: 0.72rem; letter-spacing: 0.03em; flex: 1; }
+  .dd-borough { font-size: 0.48rem; color: var(--dim); letter-spacing: 0.1em; text-transform: uppercase; white-space: nowrap; }
+
+  /* ── ROUTE BADGE ────────────────────────────────────────── */
+  .rbadge, .subway-badge {
+    border-radius: 50% !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-family: 'Bebas Neue', sans-serif !important;
+    flex-shrink: 0 !important;
+    line-height: 1 !important;
+    box-sizing: border-box !important;
+    background-image: none !important;
+  }
+
+  /* ── NEARBY RESULTS ─────────────────────────────────────── */
+  .nearby-section {
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    padding: 1.2rem 2rem;
+    display: none;
+  }
+  .nearby-section.show { display: block; }
+  .nearby-label { font-size: 0.52rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--dim); margin-bottom: 0.9rem; }
+
+  .nearby-cards { display: flex; gap: 10px; flex-wrap: wrap; }
+
+  .nearby-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 0.85rem 1.1rem;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    flex: 1;
+    min-width: 200px;
+    max-width: 340px;
+    position: relative;
+  }
+  .nearby-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: transparent; transition: background 0.2s; }
+  .nearby-card:hover { border-color: var(--muted); background: rgba(255,255,255,0.03); }
+  .nearby-card:hover::before { background: var(--arriving); }
+  .nearby-card.active-card { border-color: var(--arriving); background: rgba(0,255,136,0.03); }
+  .nearby-card.active-card::before { background: var(--arriving); }
+
+  .nc-info { flex: 1; min-width: 0; }
+  .nc-name { font-size: 0.72rem; letter-spacing: 0.04em; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .nc-dist { font-size: 0.5rem; color: var(--dim); letter-spacing: 0.1em; text-transform: uppercase; margin-top: 3px; }
+  .nc-badges { display: flex; gap: 3px; flex-wrap: wrap; }
+
+  /* ── ACTIVE STATION STRIP ───────────────────────────────── */
+  .station-strip { background: var(--bg); border-bottom: 1px solid var(--border); padding: 1rem 2rem; display: none; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+  .station-strip.show { display: flex; }
+  .sstrip-name { font-family: 'Bebas Neue', sans-serif; font-size: 1.9rem; letter-spacing: 0.08em; color: #fff; line-height: 1; }
+  .sstrip-meta { font-size: 0.52rem; color: var(--dim); letter-spacing: 0.15em; text-transform: uppercase; margin-top: 4px; }
+  .sstrip-badges { display: flex; gap: 6px; flex-wrap: wrap; }
+
+  /* ── BOARD ──────────────────────────────────────────────── */
+  .board { flex: 1; display: grid; grid-template-columns: 1fr 1fr; }
+  .direction-panel { padding: 2rem; border-right: 1px solid var(--border); }
+  .direction-panel:last-child { border-right: none; }
+
+  .dir-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 1.6rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border); }
+  .dir-title { font-family: 'Bebas Neue', sans-serif; font-size: 1.3rem; letter-spacing: 0.12em; line-height: 1; }
+  .dir-title.north { color: var(--north-accent); }
+  .dir-title.south { color: var(--south-accent); }
+  .dir-arrow { font-size: 1.5rem; opacity: 0.18; }
+
+  /* ── TRAIN ROWS ─────────────────────────────────────────── */
+  .trains-list { display: flex; flex-direction: column; gap: 2px; }
+  .train-row { display: grid; grid-template-columns: 36px 1fr auto; align-items: center; gap: 1rem; padding: 1rem 1rem 1rem 1.2rem; background: var(--surface); border: 1px solid var(--border); position: relative; overflow: hidden; }
+  .train-row::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--rc, #808183); }
+  .train-row.arriving { border-color: rgba(0,255,136,0.2); background: rgba(0,255,136,0.025); }
+  .train-row.arriving::before { animation: barpulse 1s ease-in-out infinite alternate; }
+  @keyframes barpulse { from { opacity: 0.6; } to { opacity: 1; filter: brightness(1.5); } }
+  .train-row.delayed { border-color: rgba(255,209,102,0.18); background: rgba(255,209,102,0.02); }
+  .train-row.new-entry { animation: slideIn 0.38s cubic-bezier(0.22,1,0.36,1) forwards; }
+  @keyframes slideIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+
+  .row-badge { width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-family: 'Bebas Neue', sans-serif; font-size: 1.1rem; flex-shrink: 0; }
+  .row-info { min-width: 0; }
+  .row-route { font-size: 0.72rem; letter-spacing: 0.04em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row-status { font-size: 0.5rem; color: var(--dim); letter-spacing: 0.1em; text-transform: uppercase; margin-top: 3px; }
+  .row-status.st-arriving { color: var(--arriving); }
+  .row-status.st-delayed  { color: var(--delayed); }
+  .row-time { text-align: right; flex-shrink: 0; }
+  .row-mins { font-family: 'Bebas Neue', sans-serif; font-size: 2.4rem; line-height: 1; color: #fff; letter-spacing: 0.02em; }
+  .row-mins.arriving-num { color: var(--arriving); }
+  .row-mins.delayed-num  { color: var(--delayed); }
+  .row-mins-label { font-size: 0.46rem; color: var(--dim); letter-spacing: 0.12em; text-transform: uppercase; text-align: right; }
+
+  /* ── SKELETON / EMPTY / SPLASH ──────────────────────────── */
+  .skeleton-row { height: 70px; margin-bottom: 2px; background: linear-gradient(90deg, var(--surface) 25%, var(--border) 50%, var(--surface) 75%); background-size: 200% 100%; animation: shimmer 1.4s infinite; border: 1px solid var(--border); }
+  @keyframes shimmer { to { background-position: -200% 0; } }
+
+  .empty-state { padding: 3rem 1rem; text-align: center; color: var(--dim); }
+  .empty-state .es-icon { font-size: 2rem; opacity: 0.25; margin-bottom: 0.8rem; }
+  .empty-state p { font-size: 0.6rem; letter-spacing: 0.09em; line-height: 1.9; }
+
+  .splash { grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 5rem 2rem; gap: 1.2rem; }
+  .splash-icon { font-size: 4rem; opacity: 0.12; }
+  .splash h2 { font-family: 'Bebas Neue', sans-serif; font-size: 1.8rem; letter-spacing: 0.15em; color: var(--muted); }
+  .splash p { font-size: 0.58rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim); }
+
+  /* ── ERROR ──────────────────────────────────────────────── */
+  .error-banner { background: rgba(255,60,60,0.07); border-bottom: 1px solid rgba(255,60,60,0.2); padding: 0.6rem 2rem; font-size: 0.56rem; letter-spacing: 0.1em; color: #ff6b6b; text-transform: uppercase; display: none; }
+  .error-banner.show { display: block; }
+
+  /* ── STATUS FOOTER ──────────────────────────────────────── */
+  .status-bar { background: var(--surface); border-top: 1px solid var(--border); padding: 0.55rem 2rem; display: flex; align-items: center; justify-content: space-between; font-size: 0.5rem; letter-spacing: 0.12em; color: var(--dim); text-transform: uppercase; }
+  .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); display: inline-block; margin-right: 6px; vertical-align: middle; }
+  .status-dot.live { background: var(--arriving); box-shadow: 0 0 6px var(--arriving); }
+
+  /* Google Places autocomplete dropdown styling */
+  .pac-container {
+    z-index: 9999 !important;
+    font-family: 'DM Mono', monospace !important;
+    background: #141618 !important;
+    border: 1px solid #3a3d40 !important;
+    border-top: none !important;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.6) !important;
+  }
+  .pac-item {
+    background: #141618 !important;
+    color: #d4d8db !important;
+    font-size: 0.7rem !important;
+    padding: 0.55rem 0.9rem !important;
+    cursor: pointer !important;
+    border-top: 1px solid #222527 !important;
+    line-height: 1.4 !important;
+  }
+  .pac-item:hover, .pac-item-selected { background: rgba(255,255,255,0.06) !important; }
+  .pac-item-query { color: #ffffff !important; font-size: 0.7rem !important; }
+  .pac-matched { color: #00ff88 !important; }
+  .pac-icon, .pac-logo:after { display: none !important; }
+  .hdpi .pac-icon { display: none !important; }
+
+  /* ── RESPONSIVE ─────────────────────────────────────────── */
+  @media (max-width: 700px) {
+    .board { grid-template-columns: 1fr; }
+    .direction-panel { border-right: none; border-bottom: 1px solid var(--border); }
+    .header, .search-bar, .station-strip, .direction-panel, .nearby-section { padding-left: 1rem; padding-right: 1rem; }
+    .clock { display: none; }
+    .nearby-card { max-width: 100%; }
+  }
+
+  /* ── Prevent Google Places from touching badge elements ── */
+  .subway-badge * { all: unset; }
+
+  /* ── Style the Google Places autocomplete dropdown to match our UI ── */
+  .pac-container {
+    z-index: 9999 !important;
+    background: #141618 !important;
+    border: 1px solid #222527 !important;
+    border-top: none !important;
+    border-radius: 0 !important;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.6) !important;
+    font-family: 'DM Mono', monospace !important;
+    margin-top: 0 !important;
+  }
+  .pac-item {
+    background: #141618 !important;
+    border-top: 1px solid rgba(255,255,255,0.04) !important;
+    color: #d4d8db !important;
+    font-family: 'DM Mono', monospace !important;
+    font-size: 0.72rem !important;
+    padding: 0.6rem 1rem !important;
+    cursor: pointer !important;
+    line-height: 1.4 !important;
+  }
+  .pac-item:hover, .pac-item-selected {
+    background: rgba(255,255,255,0.06) !important;
+  }
+  .pac-item-query {
+    color: #fff !important;
+    font-family: 'DM Mono', monospace !important;
+    font-size: 0.72rem !important;
+  }
+  .pac-matched {
+    color: #00ff88 !important;
+    font-weight: 500 !important;
+  }
+  /* Hide the Google Places icon (the grey circle with exclamation) */
+  .pac-icon,
+  .pac-icon-marker,
+  .pac-item .pac-icon,
+  .hdpi .pac-icon {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+    background: none !important;
+    background-image: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  .pac-logo::after { display: none !important; }
+</style>
+</head>
+<body>
+
+<!-- ── HEADER ──────────────────────────────────────────── -->
+<header class="header">
+  <div>
+    <div onclick="resetApp()" style="display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none" title="Back to start">
+      <svg width="48" height="48" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+        <!-- Outer ring segments - subway line colors -->
+        <!-- Red (1/2/3) -->
+        <path d="M24 2 A22 22 0 0 1 42.5 13" stroke="#EE352E" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <!-- Purple (7) -->
+        <path d="M42.5 13 A22 22 0 0 1 46 24" stroke="#B933AD" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <!-- Orange (B/D/F/M) -->
+        <path d="M46 24 A22 22 0 0 1 42.5 35" stroke="#FF6319" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <!-- Yellow (N/Q/R/W) -->
+        <path d="M42.5 35 A22 22 0 0 1 33 44.5" stroke="#FCCC0A" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <!-- Green (4/5/6) -->
+        <path d="M33 44.5 A22 22 0 0 1 15 44.5" stroke="#00933C" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <!-- Blue (A/C/E) -->
+        <path d="M15 44.5 A22 22 0 0 1 5.5 35" stroke="#0039A6" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <!-- Gray (L) -->
+        <path d="M5.5 35 A22 22 0 0 1 2 24" stroke="#A7A9AC" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <!-- Lime (G) -->
+        <path d="M2 24 A22 22 0 0 1 5.5 13" stroke="#6CBE45" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <!-- Brown (J/Z) -->
+        <path d="M5.5 13 A22 22 0 0 1 24 2" stroke="#996633" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <!-- Inner circle background -->
+        <circle cx="24" cy="24" r="14" fill="#0c0e0f"/>
+        <!-- White subway train icon -->
+        <!-- Car body -->
+        <rect x="11" y="17" width="26" height="16" rx="3" fill="white"/>
+        <!-- Roof -->
+        <rect x="13" y="14" width="22" height="5" rx="2" fill="white"/>
+        <!-- Windows -->
+        <rect x="13" y="19" width="7" height="5" rx="1" fill="#0c0e0f"/>
+        <rect x="21" y="19" width="6" height="5" rx="1" fill="#0c0e0f"/>
+        <rect x="28" y="19" width="7" height="5" rx="1" fill="#0c0e0f"/>
+        <!-- Front stripe -->
+        <rect x="11" y="26" width="26" height="2" rx="0" fill="#0c0e0f" opacity="0.3"/>
+        <!-- Wheels -->
+        <circle cx="16" cy="34" r="2.5" fill="white"/>
+        <circle cx="32" cy="34" r="2.5" fill="white"/>
+        <!-- Wheel axle -->
+        <rect x="14" y="33" width="20" height="1.5" fill="white" opacity="0.5"/>
+      </svg>
+      <div>
+        <div class="logo">NYC Subway</div>
+        <div class="logo-sub">Live Arrivals · All Stations</div>
+      </div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="clock" id="clock">--:--:--</div>
+    <button class="refresh-btn" id="refreshBtn" onclick="fetchArrivals()">
+      <div class="spinner"></div>
+      <span class="btn-label">↻ Refresh</span>
+    </button>
+  </div>
+</header>
+
+<!-- ── SEARCH BAR ──────────────────────────────────────── -->
+<div class="search-bar">
+  <label>Station</label>
+
+  <!-- Borough filter dropdown -->
+  <select class="borough-select" id="boroughSelect">
+    <option value="">All Boroughs</option>
+    <option value="Manhattan">Manhattan</option>
+    <option value="Brooklyn">Brooklyn</option>
+    <option value="Queens">Queens</option>
+    <option value="Bronx">Bronx</option>
+    <option value="Staten Island">Staten Island</option>
+  </select>
+
+  <!-- Station name/line search -->
+  <div class="picker-wrap">
+    <input type="text" class="search-input" id="searchInput"
+      placeholder="Station name or train line (e.g. E, 125 St, Atlantic)…"
+      autocomplete="off" spellcheck="false" />
+    <div class="dropdown" id="dropdown"></div>
+  </div>
+
+  <span class="or-divider">or</span>
+
+  <!-- Address nearby search (Google Places autocomplete) -->
+  <div class="addr-wrap">
+    <input type="text" class="addr-input" id="addrInput"
+      placeholder="Enter your address…"
+      spellcheck="false" />
+    <button class="addr-btn" id="addrBtn" onclick="searchByAddress()">
+      Find Nearby
+    </button>
+    <button class="addr-btn loc-btn" id="locBtn" onclick="useCurrentLocation()" title="Use my current location">
+      &#9737;
+    </button>
+  </div>
+</div>
+
+<!-- ── NEARBY STATIONS ─────────────────────────────────── -->
+<div class="nearby-section" id="nearbySection">
+  <div class="nearby-label" id="nearbyLabel">5 Closest Stations</div>
+  <div class="nearby-cards" id="nearbyCards"></div>
+</div>
+
+<!-- ── ACTIVE STATION STRIP ────────────────────────────── -->
+<div class="station-strip" id="stationStrip">
+  <div>
+    <div class="sstrip-name" id="sstripName"></div>
+    <div class="sstrip-meta" id="sstripMeta"></div>
+  </div>
+  <div class="sstrip-badges" id="sstripBadges"></div>
+</div>
+
+<!-- ── ERROR ────────────────────────────────────────────── -->
+<div class="error-banner" id="errorBanner"></div>
+
+<!-- ── BOARD ────────────────────────────────────────────── -->
+<main class="board" id="board">
+  <div class="splash">
+    <div class="splash-icon">🗺</div>
+    <h2>Select a Station</h2>
+    <p>Search by name, train line, or enter your address</p>
+  </div>
+</main>
+
+<!-- ── STATUS FOOTER ────────────────────────────────────── -->
+<footer class="status-bar">
+  <div>
+    <span class="status-dot" id="statusDot"></span>
+    <span id="statusText">Select a station to begin</span>
+  </div>
+  <div id="lastUpdated">–</div>
+</footer>
+
+<script>
+// ── Constants ─────────────────────────────────────────────────────────────────
+const ROUTE_COLORS = {
+  '1':'#EE352E','2':'#EE352E','3':'#EE352E',
+  '4':'#00933C','5':'#00933C','6':'#00933C',
+  '7':'#B933AD',
+  'A':'#0039A6','C':'#0039A6','E':'#0039A6',
+  'B':'#FF6319','D':'#FF6319','F':'#FF6319','M':'#FF6319',
+  'G':'#6CBE45','J':'#996633','Z':'#996633','L':'#A7A9AC',
+  'N':'#FCCC0A','Q':'#FCCC0A','R':'#FCCC0A','W':'#FCCC0A',
+  'GS':'#808183','FS':'#808183','H':'#808183','SI':'#0039A6',
+};
+const LIGHT_TEXT    = new Set(['N','Q','R','W','L','G','GS','FS']);
+const BOROUGH_ORDER = ['Manhattan','Brooklyn','Queens','Bronx','Staten Island'];
+
+function rColor(r) {
+  // Handle express variants: 7X → 7, 6X → 6, etc.
+  const base = r && r.endsWith('X') ? r.slice(0, -1) : r;
+  return ROUTE_COLORS[r] || ROUTE_COLORS[base] || '#808183';
+}
+function rText(r) {
+  const base = r && r.endsWith('X') ? r.slice(0, -1) : r;
+  return (LIGHT_TEXT.has(r) || LIGHT_TEXT.has(base)) ? '#000' : '#fff';
+}
+function badge(route, size = 20) {
+  const bg = rColor(route), fg = rText(route), fs = Math.round(size * 0.52);
+  // Inline SVG is completely immune to Google Places CSS injection
+  return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;display:inline-block;vertical-align:middle">'
+    + '<circle cx="' + (size/2) + '" cy="' + (size/2) + '" r="' + (size/2) + '" fill="' + bg + '"/>'
+    + '<text x="' + (size/2) + '" y="' + (size/2) + '" text-anchor="middle" dominant-baseline="central" fill="' + fg + '" font-family="Bebas Neue,Arial Narrow,sans-serif" font-size="' + fs + '" font-weight="700">' + route + '</text>'
+    + '</svg>';
+}
+function fmtDist(m) {
+  return m < 1000 ? `${m}m away` : `${(m/1609.34).toFixed(1)} mi away`;
+}
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let allStations     = [];
+let selectedStation = null;
+let liveNorth       = [];
+let liveSouth       = [];
+let prevNorth       = [];
+let prevSouth       = [];
+let refreshTimer    = null;
+let countdownTimer  = null;
+let isLoading       = false;
+let focusIdx        = -1;
+let nearbyStations  = [];
+
+// ── Clock ─────────────────────────────────────────────────────────────────────
+function tickClock() {
+  document.getElementById('clock').textContent =
+    new Date().toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+}
+setInterval(tickClock, 1000);
+tickClock();
+
+// ── Load stations ─────────────────────────────────────────────────────────────
+async function loadStations() {
+  try {
+    const res  = await fetch('/api/stations');
+    const data = await res.json();
+    allStations = (data.stations || []).sort((a, b) => a.name.localeCompare(b.name));
+  } catch (e) {
+    showError('Could not load station list — is the server running?');
+  }
+}
+
+// ── Search & dropdown ─────────────────────────────────────────────────────────
+const searchInput   = document.getElementById('searchInput');
+const dropdown      = document.getElementById('dropdown');
+const boroughSelect = document.getElementById('boroughSelect');
+
+function getMatches(q, borough) {
+  if (!q && !borough) return [];
+  const lq = (q || '').toLowerCase();
+  return allStations.filter(s => {
+    const matchBorough = !borough || s.borough === borough;
+    const matchQuery   = !lq ||
+      s.name.toLowerCase().includes(lq) ||
+      s.routes.some(r => r.toLowerCase() === lq || r.toLowerCase().startsWith(lq));
+    return matchBorough && matchQuery;
+  }).slice(0, 60);
+}
+
+function renderDropdown(matches) {
+  if (!matches.length) { dropdown.classList.remove('open'); return; }
+  focusIdx = -1;
+
+  const groups = {};
+  for (const s of matches) {
+    if (!groups[s.borough]) groups[s.borough] = [];
+    groups[s.borough].push(s);
+  }
+
+  let html = '';
+  for (const b of BOROUGH_ORDER) {
+    if (!groups[b]?.length) continue;
+    html += `<div class="dd-group">${b}</div>`;
+    for (const s of groups[b]) {
+      html += `
+        <div class="dd-item${selectedStation?.id === s.id ? ' active' : ''}" data-id="${s.id}">
+          <div class="dd-badges">${s.routes.slice(0,6).map(r => badge(r, 18)).join('')}</div>
+          <span class="dd-name">${s.name}</span>
+          <span class="dd-borough">${s.borough}</span>
+        </div>`;
+    }
+  }
+
+  dropdown.innerHTML = html;
+  dropdown.querySelectorAll('.dd-item').forEach(el => {
+    el.addEventListener('mousedown', e => {
+      e.preventDefault();
+      const s = allStations.find(x => x.id === el.dataset.id);
+      if (s) selectStation(s);
+    });
+  });
+  dropdown.classList.add('open');
+}
+
+function triggerSearch() {
+  const q = searchInput.value.trim();
+  const b = boroughSelect.value;
+  if (!q && !b) { dropdown.classList.remove('open'); return; }
+  renderDropdown(getMatches(q, b));
+}
+
+searchInput.addEventListener('input', triggerSearch);
+boroughSelect.addEventListener('change', () => {
+  // If a borough is selected with no search text, show all stations in that borough
+  triggerSearch();
+  if (boroughSelect.value && !searchInput.value) {
+    renderDropdown(getMatches('', boroughSelect.value));
+  }
+});
+
+searchInput.addEventListener('keydown', e => {
+  const items = [...dropdown.querySelectorAll('.dd-item')];
+  if (!items.length) return;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    focusIdx = Math.min(focusIdx + 1, items.length - 1);
+    items.forEach((el, i) => el.classList.toggle('focused', i === focusIdx));
+    items[focusIdx]?.scrollIntoView({ block: 'nearest' });
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    focusIdx = Math.max(focusIdx - 1, 0);
+    items.forEach((el, i) => el.classList.toggle('focused', i === focusIdx));
+    items[focusIdx]?.scrollIntoView({ block: 'nearest' });
+  } else if (e.key === 'Enter' && focusIdx >= 0) {
+    const s = allStations.find(x => x.id === items[focusIdx].dataset.id);
+    if (s) selectStation(s);
+  } else if (e.key === 'Escape') {
+    dropdown.classList.remove('open');
+  }
+});
+
+searchInput.addEventListener('blur', () => setTimeout(() => dropdown.classList.remove('open'), 160));
+
+searchInput.addEventListener('focus', () => {
+  // Show dropdown immediately on focus — all stations or filtered if text exists
+  const q = searchInput.value.trim();
+  const b = boroughSelect.value;
+  if (q || b) {
+    renderDropdown(getMatches(q, b));
+  } else {
+    // Show a prompt to start typing rather than all 300+ stations
+    dropdown.innerHTML = '<div style="padding:0.75rem 1rem;font-size:0.65rem;letter-spacing:0.1em;color:var(--dim);text-transform:uppercase">Type a station name or train line (e.g. E, Times Sq, Brooklyn)...</div>';
+    dropdown.classList.add('open');
+  }
+});
+
+function selectStation(station, fromNearby = false) {
+  selectedStation = station;
+  if (!fromNearby) {
+    searchInput.value = station.name;
+    dropdown.classList.remove('open');
+    // Deselect nearby cards
+    document.querySelectorAll('.nearby-card').forEach(c => c.classList.remove('active-card'));
+  }
+  updateStationStrip(station);
+  fetchArrivals();
+}
+
+function updateStationStrip(station) {
+  document.getElementById('sstripName').textContent  = station.name;
+  document.getElementById('sstripMeta').textContent  =
+    `${station.borough} · ${station.routes.join(', ')} Train${station.routes.length > 1 ? 's' : ''}`;
+  document.getElementById('sstripBadges').innerHTML  = station.routes.map(r => badge(r, 28)).join('');
+  document.getElementById('stationStrip').classList.add('show');
+}
+
+// ── Address / Nearby search ───────────────────────────────────────────────────
+// Google Places Autocomplete is initialised once the Maps JS API loads.
+// Geocoding goes through /api/geocode (key stays on the server).
+
+let googleAutocomplete = null;
+let googleAutoSelected  = false; // true when user picked a Places suggestion
+
+// Called by the Google Maps JS loader once the script is ready
+function initGooglePlaces() {
+  const input = document.getElementById('addrInput');
+  const NYC_SW = new google.maps.LatLng(40.4774, -74.2591);
+  const NYC_NE = new google.maps.LatLng(40.9176, -73.7004);
+  // Only use 'geocode' type — mixing types causes Google to throw errors
+  googleAutocomplete = new google.maps.places.Autocomplete(input, {
+    componentRestrictions: { country: 'us' },
+    bounds: new google.maps.LatLngBounds(NYC_SW, NYC_NE),
+    strictBounds: false,
+    fields: ['geometry', 'formatted_address'],
+    types: ['geocode'],
+  });
+  googleAutocomplete.addListener('place_changed', async () => {
+    const place = googleAutocomplete.getPlace();
+    if (!place.geometry || !place.geometry.location) return;
+    googleAutoSelected = true;
+    await fetchNearbyFromCoords(
+      place.geometry.location.lat(),
+      place.geometry.location.lng()
+    );
+  });
+}
+
+// ── Type address + hit Find Nearby ───────────────────────────────────────────
+async function searchByAddress() {
+  const addr = document.getElementById('addrInput').value.trim();
+  if (!addr) return;
+  // If the user picked a Places suggestion, coords were already fetched
+  if (googleAutoSelected) { googleAutoSelected = false; return; }
+  const btn = document.getElementById('addrBtn');
+  btn.classList.add('loading'); btn.textContent = '...';
+  hideError();
+  try {
+    const res  = await fetch('/api/geocode?address=' + encodeURIComponent(addr));
+    const data = await res.json();
+    if (!data.ok) {
+      showError(data.error || 'Address not found — try adding your borough, e.g. "Northern Blvd, Queens, NY"');
+      return;
+    }
+    await fetchNearbyFromCoords(data.lat, data.lng);
+  } catch(err) {
+    showError('Address search failed: ' + err.message);
+  } finally {
+    btn.classList.remove('loading'); btn.textContent = 'Find Nearby';
+  }
+}
+
+// ── Current location button ──────────────────────────────────────────────────
+function useCurrentLocation() {
+  if (!navigator.geolocation) { showError('Geolocation not supported by your browser'); return; }
+  const btn = document.getElementById('locBtn');
+  btn.classList.add('loading'); btn.innerHTML = '...';
+  hideError();
+  navigator.geolocation.getCurrentPosition(
+    async (pos) => {
+      btn.classList.remove('loading'); btn.innerHTML = '&#9737;';
+      document.getElementById('addrInput').value = 'Using your current location';
+      await fetchNearbyFromCoords(pos.coords.latitude, pos.coords.longitude);
+    },
+    (err) => {
+      btn.classList.remove('loading'); btn.innerHTML = '&#9737;';
+      const msgs = {
+        1: 'Location access denied — allow location in your browser settings',
+        2: 'Location unavailable — try entering your address manually',
+        3: 'Location timed out — try again',
+      };
+      showError(msgs[err.code] || 'Could not get your location');
+    },
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+  );
+}
+
+// ── Fetch 3 nearest stations from server ─────────────────────────────────────
+async function fetchNearbyFromCoords(lat, lng) {
+  try {
+    const res  = await fetch('/api/nearby?lat=' + lat + '&lng=' + lng);
+    const data = await res.json();
+    if (!data.ok || !data.stations?.length) { showError('Could not find nearby stations'); return; }
+    nearbyStations = data.stations;
+    renderNearbyCards(nearbyStations);
+  } catch(err) {
+    showError('Could not load nearby stations: ' + err.message);
+  }
+}
+
+// ── Render the 3 nearby station cards ────────────────────────────────────────
+function renderNearbyCards(stations) {
+  const section = document.getElementById('nearbySection');
+  const cards   = document.getElementById('nearbyCards');
+  document.getElementById('nearbyLabel').textContent =
+    '5 Closest Stations to Your Location';
+
+  cards.innerHTML = stations.map(s => {
+    const distM  = s.distance;
+    const distFt = Math.round(distM * 3.28084);
+    const distStr = distM < 500
+      ? distFt + ' ft away'
+      : (distM / 1609.34).toFixed(1) + ' mi away';
+    return `
+      <div class="nearby-card" data-id="${s.id}" onclick="selectNearby('${s.id}')">
+        <div class="nc-info">
+          <div class="nc-name">${s.name}</div>
+          <div class="nc-dist">${distStr} · ${s.borough}</div>
+          <div class="nc-badges" style="margin-top:5px">
+            ${s.routes.slice(0,6).map(r => badge(r, 16)).join('')}
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+
+  section.classList.add('show');
+
+  // Auto-select and highlight the closest one
+  if (stations.length) selectNearby(stations[0].id);
+}
+
+// ── Select a nearby card ──────────────────────────────────────────────────────
+function selectNearby(id) {
+  const s = allStations.find(x => x.id === id) || nearbyStations.find(x => x.id === id);
+  if (!s) return;
+  document.querySelectorAll('.nearby-card').forEach(c => {
+    c.classList.toggle('active-card', c.dataset.id === id);
+  });
+  searchInput.value = '';
+  updateStationStrip(s);
+  selectedStation = s;
+  fetchArrivals();
+}
+
+// ── Enter key in address box ──────────────────────────────────────────────────
+document.getElementById('addrInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') searchByAddress();
+});
+
+// ── Fetch arrivals ────────────────────────────────────────────────────────────
+async function fetchArrivals() {
+  if (!selectedStation || isLoading) return;
+  isLoading = true;
+
+  const btn = document.getElementById('refreshBtn');
+  btn.classList.add('loading');
+  hideError();
+  showSkeletons();
+
+  try {
+    const res  = await fetch(`/api/arrivals?stop=${encodeURIComponent(selectedStation.id)}`);
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Server error');
+    if (data.feedErrors?.length) showError('⚠ Some MTA feeds temporarily unavailable — data may be partial');
+
+    liveNorth = data.northbound || [];
+    liveSouth = data.southbound || [];
+
+    renderBoard(data);
+    startCountdown();
+    setStatus('live', 'Live MTA feed');
+    document.getElementById('lastUpdated').textContent =
+      'Updated ' + new Date().toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+
+  } catch (err) {
+    showError(`Could not load arrivals: ${err.message}`);
+    setStatus('', 'Error');
+    document.getElementById('board').innerHTML = `<div class="splash"><div class="splash-icon">⚠️</div><h2>Could Not Load</h2><p>Check your connection and try again</p></div>`;
+  } finally {
+    isLoading = false;
+    btn.classList.remove('loading');
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(fetchArrivals, 30_000);
+  }
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function renderBoard(data) {
+  const northTitle = data.northLabel?.trim() ? `↑ ${data.northLabel}` : '↑ Northbound';
+  const southTitle = data.southLabel?.trim() ? `↓ ${data.southLabel}` : '↓ Southbound';
+  document.getElementById('board').innerHTML = `
+    <section class="direction-panel">
+      <div class="dir-header"><div><div class="dir-title north">${northTitle}</div></div><div class="dir-arrow">⟵</div></div>
+      <div class="trains-list" id="listNorth"></div>
+    </section>
+    <section class="direction-panel">
+      <div class="dir-header"><div><div class="dir-title south">${southTitle}</div></div><div class="dir-arrow">⟶</div></div>
+      <div class="trains-list" id="listSouth"></div>
+    </section>`;
+  renderList('listNorth', liveNorth, prevNorth);
+  renderList('listSouth', liveSouth, prevSouth);
+  prevNorth = [...liveNorth];
+  prevSouth = [...liveSouth];
+}
+
+function renderList(containerId, trains, prev) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  const now    = Math.floor(Date.now() / 1000);
+  const active = trains.filter(t => t.arrivalTime > now - 30);
+  if (!active.length) {
+    el.innerHTML = `<div class="empty-state"><div class="es-icon">🚇</div><p>No upcoming arrivals<br>in the next 30 minutes</p></div>`;
+    return;
+  }
+  const prevKeys = new Set((prev || []).map(p => p.route + p.arrivalTime));
+  el.innerHTML = active.slice(0, 5).map(t => {
+    const secs = t.arrivalTime - now, mins = Math.max(0, Math.floor(secs / 60));
+    const arriving = secs < 60, delayed = t.status === 'delayed';
+    const isNew    = !prevKeys.has(t.route + t.arrivalTime);
+    const bg = rColor(t.route), fg = rText(t.route);
+    const cls = ['train-row', arriving?'arriving':'', delayed?'delayed':'', isNew?'new-entry':''].filter(Boolean).join(' ');
+    const stTxt = arriving ? 'Arriving now' : delayed ? 'Delayed' : 'On time';
+    const stCls = arriving ? 'st-arriving'  : delayed ? 'st-delayed' : '';
+    const mCls  = arriving ? 'arriving-num' : delayed ? 'delayed-num' : '';
+    return `
+      <div class="${cls}" style="--rc:${bg}">
+        <div class="row-badge" style="background:${bg};color:${fg}">${t.route}</div>
+        <div class="row-info">
+          <div class="row-route">${t.route} Train</div>
+          <div class="row-status ${stCls}">${stTxt}</div>
+        </div>
+        <div class="row-time">
+          <div class="row-mins ${mCls}">${arriving ? '&lt;1' : mins}</div>
+          <div class="row-mins-label">min</div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function showSkeletons() {
+  if (!selectedStation) return;
+  const skels = Array(5).fill('<div class="skeleton-row"></div>').join('');
+  document.getElementById('board').innerHTML = `
+    <section class="direction-panel"><div class="dir-header"><div class="dir-title north">↑ Loading…</div></div><div class="trains-list">${skels}</div></section>
+    <section class="direction-panel"><div class="dir-header"><div class="dir-title south">↓ Loading…</div></div><div class="trains-list">${skels}</div></section>`;
+}
+
+// ── Countdown ─────────────────────────────────────────────────────────────────
+function startCountdown() {
+  clearInterval(countdownTimer);
+  countdownTimer = setInterval(() => {
+    const now = Math.floor(Date.now() / 1000);
+    const before = liveNorth.length + liveSouth.length;
+    liveNorth = liveNorth.filter(t => t.arrivalTime > now - 30);
+    liveSouth = liveSouth.filter(t => t.arrivalTime > now - 30);
+    if (liveNorth.length + liveSouth.length < before) { fetchArrivals(); return; }
+    renderList('listNorth', liveNorth, prevNorth);
+    renderList('listSouth', liveSouth, prevSouth);
+  }, 5_000);
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function setStatus(state, msg) {
+  document.getElementById('statusDot').className    = 'status-dot' + (state === 'live' ? ' live' : '');
+  document.getElementById('statusText').textContent = msg;
+}
+function showError(msg) { const el = document.getElementById('errorBanner'); el.textContent = msg; el.classList.add('show'); }
+function hideError()    { document.getElementById('errorBanner').classList.remove('show'); }
+
+// ── Reset — clears all state and returns to the initial splash screen ────────
+function resetApp() {
+  // Clear state
+  selectedStation = null;
+  liveNorth       = [];
+  liveSouth       = [];
+  prevNorth       = [];
+  prevSouth       = [];
+  nearbyStations  = [];
+  clearTimeout(refreshTimer);
+  clearInterval(countdownTimer);
+
+  // Clear inputs
+  document.getElementById('searchInput').value  = '';
+  document.getElementById('addrInput').value    = '';
+  document.getElementById('boroughSelect').value = '';
+
+  // Hide sections
+  document.getElementById('stationStrip').classList.remove('show');
+  document.getElementById('nearbySection').classList.remove('show');
+  document.getElementById('dropdown').classList.remove('open');
+
+  // Reset board to splash
+  document.getElementById('board').innerHTML = `
+    <div class="splash">
+      <div class="splash-icon">🗺</div>
+      <h2>Select a Station</h2>
+      <p>Search by name, train line, or enter your address</p>
+    </div>`;
+
+  // Reset status
+  hideError();
+  setStatus('', 'Select a station to begin');
+  document.getElementById('lastUpdated').textContent = '–';
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+loadStations();
+</script>
+</body>
+</html>
